@@ -1,0 +1,11 @@
+{
+  "name": "@agent-poker/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@agent-poker/engine": "*",
+    "@agent-poker/protocol": "*",
+    "ws": "^8.18.0"
+  }
+}

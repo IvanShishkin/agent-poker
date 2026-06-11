@@ -1,0 +1,12 @@
+{
+  "name": "@agent-poker/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/server.ts",
+  "dependencies": {
+    "@agent-poker/protocol": "*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  }
+}
