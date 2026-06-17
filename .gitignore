@@ -4,5 +4,6 @@ dist/
 logs/
 *.log
 .DS_Store
-
+.env
+DEPLOY.md
 /llm-agent/

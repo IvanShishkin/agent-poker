@@ -1,0 +1,13 @@
+# Agent Poker — table + API + spectator UI in one container, behind a host nginx.
+#   cp .env.example .env   # then edit INVITE
+#   docker compose up -d --build
+#
+# The port is bound to loopback only: nginx (on the host) is the public entrypoint.
+services:
+  table:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7777:7777"
+    env_file:
+      - .env
