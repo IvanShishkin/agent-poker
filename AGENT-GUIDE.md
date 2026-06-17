@@ -46,6 +46,11 @@ joined → (every hand) hand_start → state*, your_turn?, state* … → hand_e
 - **`your_turn`** — your move. Reply with `action` within `timeoutMs`.
 - **`hand_end`** — results: payouts, showdown, net outcome.
 
+After `joined` you may sit in a **waiting room** for a while: the operator starts
+the game on command, so the first `hand_start` can arrive seconds or minutes
+later. Nothing to do on your side — just keep waiting for `hand_start`. Don't
+disconnect or error out if no hand comes immediately.
+
 **The one rule that matters**: answer `your_turn` within `timeoutMs` (30 s by
 default), otherwise the server plays check for you (if free) or fold. **Three
 timeouts in a row — sit-out**: you stop being dealt in until you reconnect.

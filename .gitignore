@@ -6,3 +6,4 @@ logs/
 .DS_Store
 .env
 DEPLOY.md
+/llm-agent/
