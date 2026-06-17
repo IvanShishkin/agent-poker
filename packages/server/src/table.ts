@@ -42,6 +42,8 @@ export interface TableConfig {
   staticDir: string | null
   /** Secret for the control API (/api/start|pause|reset). null = controls disabled. */
   adminToken: string | null
+  /** Free a seat this long after its socket drops (lets reconnect-by-token win first). */
+  seatGraceMs: number
 }
 
 export const DEFAULT_CONFIG: TableConfig = {
@@ -61,6 +63,7 @@ export const DEFAULT_CONFIG: TableConfig = {
   blindLevelHands: 20,
   staticDir: null,
   adminToken: null,
+  seatGraceMs: 60_000,
 }
 
 interface SeatInfo {
@@ -77,6 +80,8 @@ interface SeatInfo {
   eliminated: boolean
   /** Final tournament place, assigned when the tournament ends. */
   place: number | null
+  /** When the socket dropped (ms epoch); null while connected. Used to reap abandoned seats. */
+  disconnectedAt: number | null
 }
 
 interface PendingTurn {
@@ -93,6 +98,7 @@ export class Table {
   readonly config: TableConfig
   private httpServer: http.Server | null = null
   private wss: WebSocketServer | null = null
+  private reaper: ReturnType<typeof setInterval> | null = null
   private seats = new Map<number, SeatInfo>()
   private spectators = new Set<WebSocket>()
   private state: HandState | null = null
@@ -125,11 +131,13 @@ export class Table {
     this.wss = new WebSocketServer({ server: this.httpServer })
     this.wss.on('connection', (socket, req) => this.onConnection(socket, req))
     this.httpServer.listen(this.config.port)
+    this.reaper = setInterval(() => this.reapSeats(), 10_000)
     void this.gameLoop()
   }
 
   stop(): void {
     this.stopped = true
+    if (this.reaper) clearInterval(this.reaper)
     this.wss?.close()
     this.httpServer?.close()
     for (const seat of this.seats.values()) seat.socket?.close()
@@ -399,6 +407,7 @@ export class Table {
       this.spectators.delete(socket)
       if (boundSeat && boundSeat.socket === socket) {
         boundSeat.socket = null
+        boundSeat.disconnectedAt = Date.now() // start the grace clock before reaping
         if (!this.running) this.broadcastTableStatus() // lobby reflects who dropped
       }
     })
@@ -413,6 +422,7 @@ export class Table {
         existing.socket = socket
         existing.sittingOut = false
         existing.consecutiveTimeouts = 0
+        existing.disconnectedAt = null
         this.sendJoined(socket, existing)
         return existing
       }
@@ -442,6 +452,7 @@ export class Table {
       lastSayAt: 0,
       eliminated: false,
       place: null,
+      disconnectedAt: null,
     }
     this.seats.set(seatNo, seat)
     this.sendJoined(socket, seat)
@@ -469,6 +480,26 @@ export class Table {
     return [...this.seats.values()]
       .filter((s) => !s.sittingOut && !s.eliminated && s.socket?.readyState === WebSocket.OPEN && s.chips > 0)
       .sort((a, b) => a.seat - b.seat)
+  }
+
+  /**
+   * Free seats abandoned past the grace window so the table doesn't fill with
+   * ghosts (crashed/restarted bots that minted a new seat instead of reconnecting).
+   * Reconnect-by-token clears `disconnectedAt`, so a returning bot keeps its seat.
+   * A seat in the hand currently being played is never yanked.
+   */
+  private reapSeats(): void {
+    const now = Date.now()
+    let changed = false
+    for (const [no, s] of this.seats) {
+      if (s.socket?.readyState === WebSocket.OPEN || s.disconnectedAt === null) continue
+      if (now - s.disconnectedAt < this.config.seatGraceMs) continue
+      if (this.state?.players.some((p) => p.seat === s.seat)) continue // mid-hand: keep it
+      this.seats.delete(no)
+      changed = true
+      console.log(`[table] freed seat ${no} (${s.name}) — disconnected > ${this.config.seatGraceMs}ms`)
+    }
+    if (changed) this.broadcastTableStatus()
   }
 
   // ---------- operator controls ----------
