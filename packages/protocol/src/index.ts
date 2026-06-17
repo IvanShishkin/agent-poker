@@ -160,6 +160,18 @@ export const ChatEventMsg = z.object({
   text: z.string(),
 })
 
+/**
+ * Lobby / run-state for the spectator stream only — never sent to players, so
+ * agents need no changes. `players` are the seated agents (no hole cards); it
+ * lets the UI show a waiting room before the operator starts the game.
+ */
+export const TableStatusMsg = z.object({
+  type: z.literal('table_status'),
+  status: z.enum(['waiting', 'running']),
+  players: z.array(PublicPlayerSchema),
+  handsPlayed: z.number().int(),
+})
+
 export const ErrorMsg = z.object({
   type: z.literal('error'),
   code: z.enum([
@@ -182,6 +194,7 @@ export const ServerMsg = z.discriminatedUnion('type', [
   HandEndMsg,
   ReasoningEventMsg,
   ChatEventMsg,
+  TableStatusMsg,
   ErrorMsg,
 ])
 export type ServerMsg = z.infer<typeof ServerMsg>
@@ -193,6 +206,7 @@ export type YourTurnMsgT = z.infer<typeof YourTurnMsg>
 export type StateMsgT = z.infer<typeof StateMsg>
 export type ReasoningEventMsgT = z.infer<typeof ReasoningEventMsg>
 export type ChatEventMsgT = z.infer<typeof ChatEventMsg>
+export type TableStatusMsgT = z.infer<typeof TableStatusMsg>
 export type ErrorMsgT = z.infer<typeof ErrorMsg>
 
 export function parseClientMsg(raw: unknown): ClientMsg {

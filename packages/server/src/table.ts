@@ -40,6 +40,8 @@ export interface TableConfig {
   blindLevelHands: number
   /** Directory with the built spectator UI to serve at / (null = API only). */
   staticDir: string | null
+  /** Secret for the control API (/api/start|pause|reset). null = controls disabled. */
+  adminToken: string | null
 }
 
 export const DEFAULT_CONFIG: TableConfig = {
@@ -58,6 +60,7 @@ export const DEFAULT_CONFIG: TableConfig = {
   tournament: false,
   blindLevelHands: 20,
   staticDir: null,
+  adminToken: null,
 }
 
 interface SeatInfo {
@@ -97,6 +100,10 @@ export class Table {
   private handCounter = 0
   private buttonSeat = 0
   private stopped = false
+  /** Game runs only after an operator start; hands are not dealt while false. */
+  private running = false
+  /** A reset requested mid-hand: applied between hands so the in-flight hand isn't clobbered. */
+  private resetPending = false
   private logStream: fs.WriteStream | null = null
   private logPath = ''
   private eliminationOrder: number[] = []
@@ -174,6 +181,7 @@ export class Table {
     if (u.pathname === '/api/leaderboard') {
       json({
         mode: this.config.tournament ? 'tournament' : 'cash',
+        status: this.running ? 'running' : 'waiting',
         tournamentOver: this.tournamentOver,
         blinds: this.currentBlinds(),
         seats: { taken: this.seats.size, max: this.config.maxSeats },
@@ -205,6 +213,28 @@ export class Table {
     if (u.pathname === '/api/hands') {
       const limit = Math.min(Number(u.searchParams.get('limit')) || 50, 500)
       json(this.readHandLog().slice(-limit).reverse())
+      return
+    }
+    // Operator controls — start/pause/reset the game. Guarded by ADMIN_TOKEN.
+    const control = u.pathname.match(/^\/api\/(start|pause|reset)$/)
+    if (control && req.method === 'POST') {
+      const admin = this.config.adminToken
+      const token = req.headers['x-admin-token'] ?? u.searchParams.get('token') ?? ''
+      if (!admin) {
+        res.statusCode = 403
+        json({ error: 'controls disabled — set ADMIN_TOKEN on the server' })
+        return
+      }
+      if (token !== admin) {
+        res.statusCode = 401
+        json({ error: 'bad or missing admin token' })
+        return
+      }
+      const action = control[1]
+      if (action === 'start') this.startGame()
+      else if (action === 'pause') this.pauseGame()
+      else this.resetGame()
+      json({ ok: true, action, status: this.running ? 'running' : 'waiting' })
       return
     }
     if (this.config.staticDir && req.method === 'GET' && this.serveStatic(u.pathname, res)) return
@@ -319,6 +349,7 @@ export class Table {
           }
           boundSeat = this.handleJoin(socket, msg.name, msg.token ?? undefined)
           if (boundSeat && viaOneTime) this.oneTimeInvites.delete(inviteParam!) // consumed
+          if (boundSeat) this.broadcastTableStatus() // refresh the lobby view
           break
         }
         case 'action': {
@@ -366,7 +397,10 @@ export class Table {
 
     socket.on('close', () => {
       this.spectators.delete(socket)
-      if (boundSeat && boundSeat.socket === socket) boundSeat.socket = null
+      if (boundSeat && boundSeat.socket === socket) {
+        boundSeat.socket = null
+        if (!this.running) this.broadcastTableStatus() // lobby reflects who dropped
+      }
     })
   }
 
@@ -437,6 +471,88 @@ export class Table {
       .sort((a, b) => a.seat - b.seat)
   }
 
+  // ---------- operator controls ----------
+
+  get isRunning(): boolean {
+    return this.running
+  }
+
+  /** Begin dealing hands (the game loop deals once ≥2 players are seated). */
+  startGame(): void {
+    if (this.running) return
+    this.running = true
+    this.broadcastTableStatus()
+    console.log('[table] game started')
+  }
+
+  /** Stop dealing after the current hand finishes; players keep their seats. */
+  pauseGame(): void {
+    if (!this.running) return
+    this.running = false
+    this.broadcastTableStatus()
+    console.log('[table] game paused')
+  }
+
+  /** Pause and restore every seat to a fresh buy-in (live stacks/standings only). */
+  resetGame(): void {
+    this.running = false
+    if (this.state) {
+      // A hand is in flight — defer the stack reset so playHand doesn't overwrite it.
+      this.resetPending = true
+      this.broadcastTableStatus()
+      console.log('[table] reset queued — applies after the current hand')
+      return
+    }
+    this.applyReset()
+  }
+
+  private applyReset(): void {
+    for (const s of this.seats.values()) {
+      s.chips = this.config.buyIn
+      s.buyIns = 1
+      s.handsPlayed = 0
+      s.eliminated = false
+      s.sittingOut = false
+      s.consecutiveTimeouts = 0
+      s.place = null
+    }
+    this.eliminationOrder = []
+    this.tournamentOver = false
+    this.handCounter = 0
+    this.state = null
+    this.broadcastTableStatus()
+    console.log('[table] game reset')
+  }
+
+  /** Seated players for the lobby view — no hand in progress, so no hole cards. */
+  private seatedPlayers(): PublicPlayer[] {
+    return [...this.seats.values()]
+      .sort((a, b) => a.seat - b.seat)
+      .map((s) => ({
+        seat: s.seat,
+        name: s.name,
+        chips: s.chips,
+        bet: 0,
+        folded: false,
+        allIn: false,
+        sittingOut: s.sittingOut,
+        connected: s.socket?.readyState === WebSocket.OPEN,
+      }))
+  }
+
+  private tableStatusMsg(): ServerMsg {
+    return {
+      type: 'table_status',
+      status: this.running ? 'running' : 'waiting',
+      players: this.seatedPlayers(),
+      handsPlayed: this.handCounter,
+    }
+  }
+
+  private broadcastTableStatus(): void {
+    this.broadcastSpectators(this.tableStatusMsg())
+  }
+
   private async gameLoop(): Promise<void> {
     while (!this.stopped) {
       if (this.config.maxHands > 0 && this.handCounter >= this.config.maxHands) break
@@ -444,8 +560,14 @@ export class Table {
         await sleep(1000)
         continue
       }
+      // Apply a deferred reset now that no hand is in flight.
+      if (this.resetPending && !this.state) {
+        this.resetPending = false
+        this.applyReset()
+      }
+      // Hands are dealt only after an operator start, and only with ≥2 players.
       const players = this.eligibleSeats()
-      if (players.length < 2) {
+      if (!this.running || players.length < 2) {
         await sleep(1000)
         continue
       }
@@ -690,6 +812,8 @@ export class Table {
   }
 
   private sendSnapshot(socket: WebSocket): void {
+    // Always send the lobby/run-state first so a fresh spectator sees the waiting room.
+    this.send(socket, this.tableStatusMsg())
     if (!this.state) return
     this.send(socket, {
       type: 'hand_start',

@@ -26,6 +26,7 @@ const table = new Table({
   tournament: !!process.env.TOURNAMENT,
   blindLevelHands: env('BLIND_LEVEL_HANDS', 20),
   staticDir,
+  adminToken: process.env.ADMIN_TOKEN ?? null,
 })
 
 table.start()
@@ -43,6 +44,12 @@ if (invite) {
 }
 console.log(`[table] api: ${httpBase}/api/leaderboard`)
 if (staticDir) console.log(`[table] spectator UI: ${httpBase}/`)
+console.log('[table] game is WAITING — start it with the control API')
+if (process.env.ADMIN_TOKEN) {
+  console.log(`[table] controls: curl -X POST ${httpBase}/api/start -H 'x-admin-token: <ADMIN_TOKEN>' (also /api/pause, /api/reset)`)
+} else {
+  console.log('[table] controls DISABLED — set ADMIN_TOKEN to enable /api/start|pause|reset')
+}
 
 process.on('SIGINT', () => {
   console.log('\n[table] final stats:')
