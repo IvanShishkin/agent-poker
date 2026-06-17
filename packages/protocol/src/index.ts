@@ -64,6 +64,8 @@ export const PublicPlayerSchema = z.object({
   connected: z.boolean(),
   /** Hole cards: present only in spectator stream (god view) or for yourself in `hand_start`. */
   holeCards: z.array(CardSchema).length(2).optional(),
+  /** Win probability [0,1] for the current hand — spectator (god view) only, live players only. */
+  equity: z.number().optional(),
 })
 export type PublicPlayer = z.infer<typeof PublicPlayerSchema>
 

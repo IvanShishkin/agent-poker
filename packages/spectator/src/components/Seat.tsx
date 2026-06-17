@@ -41,6 +41,12 @@ export function Seat({ player, isToAct, isWinner, winner, handName, handOver, ha
         )}
       </div>
 
+      {!out && !folded && !handOver && player.equity !== undefined && (
+        <div className="seat__equity" title="win probability (god view)">
+          {Math.round(player.equity * 100)}%
+        </div>
+      )}
+
       <div className="seat__plate">
         <div className="seat__name">
           {!player.connected && <span className="seat__offline" title="disconnected" />}

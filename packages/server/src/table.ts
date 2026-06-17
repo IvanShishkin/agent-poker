@@ -7,6 +7,7 @@ import {
   advanceStreet,
   applyAction,
   createHand,
+  handEquity,
   isComplete,
   legalActions,
   potSize,
@@ -102,6 +103,8 @@ export class Table {
   private seats = new Map<number, SeatInfo>()
   private spectators = new Set<WebSocket>()
   private state: HandState | null = null
+  /** Memoised god-view equity, keyed by board + live seats (see equity()). */
+  private equityCache: { key: string; map: Record<number, number> } | null = null
   private pending: PendingTurn | null = null
   private handCounter = 0
   private buttonSeat = 0
@@ -802,6 +805,8 @@ export class Table {
   // ---------- messaging ----------
 
   private publicPlayers(state: HandState, reveal: boolean): PublicPlayer[] {
+    // Win % is god-view info — computed only for the spectator stream.
+    const eq = reveal ? this.equity(state) : null
     return state.players.map((p) => {
       const seat = this.seats.get(p.seat)
       return {
@@ -814,8 +819,28 @@ export class Table {
         sittingOut: seat?.sittingOut ?? false,
         connected: seat?.socket?.readyState === WebSocket.OPEN,
         ...(reveal ? { holeCards: p.holeCards } : {}),
+        ...(eq && eq[p.seat] !== undefined ? { equity: eq[p.seat] } : {}),
       }
     })
+  }
+
+  /**
+   * Win probability per live seat for the spectator god-view. Memoised by board +
+   * live seats, so it recomputes only when the board advances or someone folds —
+   * not on every action. Heavy preflop case is sampled inside handEquity.
+   */
+  private equity(state: HandState): Record<number, number> {
+    const live = state.players.filter((p) => !p.folded)
+    if (live.length < 2) return {}
+    const key = `${state.handId}|${state.board.join('')}|${live.map((p) => p.seat).join(',')}`
+    if (this.equityCache?.key === key) return this.equityCache.map
+    const map = handEquity({
+      board: state.board,
+      players: live.map((p) => ({ seat: p.seat, holeCards: p.holeCards })),
+      deadHoleCards: state.players.filter((p) => p.folded).flatMap((p) => p.holeCards),
+    })
+    this.equityCache = { key, map }
+    return map
   }
 
   private stateMsg(state: HandState, reveal: boolean): ServerMsg {
