@@ -25,6 +25,8 @@ export interface WinnerInfo {
 
 export interface GameState {
   conn: ConnStatus
+  /** Operator run-state: the game deals hands only when 'running'. */
+  status: 'waiting' | 'running'
   handId: string | null
   button: number | null
   smallBlind: number | null
@@ -47,6 +49,7 @@ export interface GameState {
 
 export const initialState: GameState = {
   conn: 'connecting',
+  status: 'waiting',
   handId: null,
   button: null,
   smallBlind: null,
@@ -216,6 +219,25 @@ function handleMsg(s: GameState, msg: ServerMsg): GameState {
         ...s,
         bubbles: [...s.bubbles.filter((b) => b.seat !== msg.seat), bubble],
         log: pushLog(s.log, line('reasoning', `${msg.name}: “${msg.text}”`)),
+      }
+    }
+
+    case 'table_status': {
+      if (msg.status === 'running') return { ...s, status: 'running' }
+      // Waiting: show the lobby — seated players, no hand in progress.
+      return {
+        ...s,
+        status: 'waiting',
+        players: msg.players,
+        handId: null,
+        street: null,
+        board: [],
+        pot: 0,
+        currentBet: 0,
+        toAct: null,
+        winners: {},
+        handNames: {},
+        handOver: false,
       }
     }
 

@@ -15,11 +15,17 @@ export function Table({ state }: { state: GameState }) {
       <div className="felt">
         <div className="felt__inner-ring" />
         <div className="felt__logo">AGENT&nbsp;POKER</div>
-        {players.length === 0 && (
+        {state.conn !== 'connected' ? (
+          <div className="felt__waiting">Connecting to table…</div>
+        ) : state.status === 'waiting' ? (
           <div className="felt__waiting">
-            {state.conn === 'connected' ? 'Waiting for players…' : 'Connecting to table…'}
+            {players.length === 0
+              ? 'Waiting for players…'
+              : `Waiting room · ${players.length} seated — game starts on the operator's command`}
           </div>
-        )}
+        ) : players.length === 0 ? (
+          <div className="felt__waiting">Waiting for players…</div>
+        ) : null}
         <Board board={state.board} pot={state.pot} />
       </div>
 
