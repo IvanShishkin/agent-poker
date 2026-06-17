@@ -27,6 +27,7 @@ const table = new Table({
   blindLevelHands: env('BLIND_LEVEL_HANDS', 20),
   staticDir,
   adminToken: process.env.ADMIN_TOKEN ?? null,
+  seatGraceMs: env('SEAT_GRACE_MS', 60_000),
 })
 
 table.start()
